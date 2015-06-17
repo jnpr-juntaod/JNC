@@ -1030,11 +1030,16 @@ class SchemaNode(object):
             jnc, primitive = get_types(type, self.ctx)
             res.append('<yang_type>' + typename + '</yang_type>')
             res.append('<yang_java_type>' + jnc + '</yang_java_type>')
+            if type.arg == "leafref":
+                path = search_one(type, "path")
+                res.append('<yang_leafref_path>' + path.arg + '</yang_leafref_path>')
 
         if search_one(self.stmt, ('csp-common', 'vertex')):
             res.append('<yang_graph_type>1</yang_graph_type>')
-        elif search_one(self.stmt, ('csp-common', 'edge')):
+        elif search_one(self.stmt, ('csp-common', 'has-edge')):
             res.append('<yang_graph_type>2</yang_graph_type>')
+        elif search_one(self.stmt, ('csp-common', 'ref-edge')):
+            res.append('<yang_graph_type>3</yang_graph_type>')
         else:
             res.append('<yang_graph_type>0</yang_graph_type>')
 
