@@ -601,7 +601,7 @@ def normalize(string):
     start = 1 if res.startswith('_') else 0
     end = -1 if res.endswith('_') else 0
     if start or end:
-        res = 'J' + capitalize_first(res[start:end])
+        res = capitalize_first(res[start:end])
     else:
         res = capitalize_first(res)
     normalized_stmt_args[string] = res  # Add to cache
@@ -967,7 +967,7 @@ class ClassGenerator(object):
             for stmt in search(module, list(yangelement_stmts)):
                 # Do not generate include stmt in submodule
                 if stmt.i_orig_module.arg == module.arg:
-                    self.generate_routes(stmt)
+                    self.generate_xsd_elements(stmt)
 
             write_file(path,
                filename,
@@ -981,7 +981,7 @@ class ClassGenerator(object):
         exact = []
 
         if len(stmt.i_children) == 1 and stmt.i_children[0].keyword == "list":
-            exact.append(file_indent+'<xsd:complexType name="'+normalize(stmt.i_children[0].arg)+'Type">')
+            exact.append(file_indent+'<xsd:complexType name="'+normalize(stmt.arg)+'Type">')
             for sub_stmt in search(stmt, list(yangelement_stmts)):
                 exact.append(indent+'<xsd:all>')
                 for property in search(sub_stmt, ["leaf", "container"]):
@@ -991,24 +991,76 @@ class ClassGenerator(object):
                     uses = search_one(property, 'uses')
                     if uses:
                         type_name = uses.arg
-                    exact.append(body_indent+'<xsd:element name="'+property.arg+'" type="'+type_name+'"/>')
+                    if property.parent.arg == sub_stmt.arg:
+                        exact.append(body_indent+'<xsd:element name="'+property.arg+'" type="'+type_name+'"/>')
+
+                choice = search_one(sub_stmt, "choice")
+                if choice:
+                    type_name = normalize(sub_stmt.arg+choice.arg)+'Type'
+                    self.generate_choicetype(type_name, choice)
+                    exact.append(body_indent+'<xsd:element name="'+choice.arg+'" type="'+type_name+'"/>')
+
                 exact.append(indent+'</xsd:all>')
             exact.append(file_indent+'</xsd:complexType>')
+
+        choice = search_one(stmt, "choice")
+        if choice:
+            type_name = normalize(stmt.arg+choice.arg)+'Type'
+            self.generate_choicetype(type_name, choice)
+            #exact.append(file_indent+'<xsd:complexType name="'+normalize(stmt.arg)+'Type">')
+            #exact.append(indent+'<xsd:all>')
+            #exact.append(body_indent+'<xsd:element name="'+choice.arg+'" type="'+type_name+'"/>')
+            #exact.append(indent+'</xsd:all>')
+            #exact.append(file_indent+'</xsd:complexType>')
 
         grouping = JavaValue(exact)
         self.java_class.append_access_method("a_grouping", grouping)
 
-    def generate_type(self, parent_arg, stmt):
-        sub_type = []
-        subenum_type = []
+    def generate_choicetype(self, choice_type_name, choice):
+        choice_stmt = []
         file_indent = '\t'
         indent = '\t' * 2
         body_indent = '\t' * 3
-        leaf_type_name = "xsd:string"
+
+        choice_stmt.append(file_indent+'<xsd:complexType name="'+choice_type_name+'">')
+        choice_stmt.append(indent+'<xsd:choice>')
+        for value in search(choice, "case"):
+            case_typename = normalize(choice_type_name+value.arg)
+            self.generate_type(case_typename, value)
+            choice_stmt.append(body_indent+'<xsd:element name="'+value.arg+'" type="'+case_typename+'Type "/>')
+        choice_stmt.append(indent+'</xsd:choice>')
+        choice_stmt.append(file_indent+'</xsd:complexType>')
+
+        choice_value = JavaValue(choice_stmt)
+        self.java_class.add_xsd_type("choice_"+choice_type_name, choice_value)
+
+    def generate_type(self, parent_arg, stmt):
+        type_body = []
+        file_indent = '\t'
+        indent = '\t' * 2
+        body_indent = '\t' * 3
         type_name =parent_arg + "Type"
-        sub_type.append(file_indent + '<xsd:complexType name="' + type_name + '">')
-        sub_type.append(indent + '<xsd:all>')
+
+        type_body.append(file_indent + '<xsd:complexType name="' + type_name + '">')
+        type_body.append(indent + '<xsd:all>')
+
+        #generate choice type
+        choice = search_one(stmt, "choice")
+        if choice:
+            if hasattr(choice, 'i_uses'):
+                # grouping contain choice, use grouping to avoid duplicate code
+                choice_type = normalize(choice.i_uses[0].arg + choice.arg + "type")
+                type_body.append(body_indent + '<xsd:element name="' + choice.arg + '" type="' + choice_type + '"/>')
+            else:
+                choice_type = normalize(stmt.arg+choice.arg)+'Type'
+                self.generate_choicetype(choice_type, choice)
+                type_body.append(body_indent + '<xsd:element name="' + choice.arg + '" type="' + choice_type + '"/>')
+
         for property in search(stmt, list(yangelement_stmts)):
+
+            if property.parent.arg != stmt.arg:
+                continue
+
             if property.keyword == "leaf":
                 type = search_one(property, 'type')
                 if type.arg == "inet:uri":
@@ -1017,44 +1069,57 @@ class ClassGenerator(object):
                     leaf_type_name = "xsd:string"
                 elif type.arg == "string":
                     leaf_type_name = "xsd:string"
+                elif type.arg == "boolean":
+                    leaf_type_name = "xsd:boolean"
+                elif type.arg == "int8":
+                    leaf_type_name = "xsd:byte"
+                elif type.arg == "int16":
+                    leaf_type_name = "xsd:short"
+                elif type.arg == "int32":
+                    leaf_type_name = "xsd:int"
+                elif type.arg == "int64":
+                    leaf_type_name = "xsd:long"
+                elif type.arg == "uint8":
+                    leaf_type_name = "xsd:unsignedByte"
+                elif type.arg == "uint16":
+                    leaf_type_name = "xsd:unsignedShort"
                 elif type.arg == "uint32":
-                    leaf_type_name = "xsd:integer"
+                    leaf_type_name = "xsd:unsignedInt"
+                elif type.arg == "uint64":
+                    leaf_type_name = "xsd:unsignedLong"
+                elif type.arg == "decimal64":
+                    leaf_type_name = "xsd:decimal"
                 elif type.arg == "enumeration":
-                    subenum_type.append(
-                        file_indent + '<xsd:simpleType name="' + normalize(property.arg + "-" + "type") + '" >')
-                    subenum_type.append(indent + '<xsd:restriction base="xsd:string">')
-                    for enum in type.substmts:
-                        subenum_type.append(body_indent + '<xsd:enumeration value="' + enum.arg + '" />')
-                    subenum_type.append(indent + '</xsd:restriction>')
-                    subenum_type.append(file_indent + '</xsd:simpleType>')
+                    self.generate_enumtype(property.arg, type)
                     leaf_type_name = normalize(property.arg + "-" + "type")
+                else:
+                    leaf_type_name = type.arg
 
-                sub_type.append(body_indent + '<xsd:element name="' + property.arg + '" type="' + leaf_type_name + '"/>')
+                type_body.append(body_indent + '<xsd:element name="' + property.arg + '" type="' + leaf_type_name + '"/>')
 
-            if property.keyword == "list":
+            if property.keyword in ["list"]:
+                if hasattr(property, 'i_uses'):
+                    # grouping contain list, use grouping to avoid duplicate code
+                    leaf_type_name = normalize(property.i_uses[0].arg + "-" + "type")
+                    type_body.append(body_indent + '<xsd:element name="' + property.arg + '" type="' + leaf_type_name + '" maxOccurs="unbounded"/>')
+                    continue
                 property_arg = property.arg.replace("_","-")
                 typename = parent_arg+normalize(property_arg)
                 leaf_type_name = typename + "Type"
                 self.generate_type(typename, property)
+                type_body.append(body_indent + '<xsd:element name="' + property.arg + '" type="' + leaf_type_name + '" maxOccurs="unbounded"/>')
+        type_body.append(indent + '</xsd:all>')
+        type_body.append(file_indent + '</xsd:complexType>')
 
-                sub_type.append(body_indent + '<xsd:element name="' + property.arg + '" type="' + leaf_type_name + '" maxOccurs="unbounded"/>')
-        sub_type.append(indent + '</xsd:all>')
-        sub_type.append(file_indent + '</xsd:complexType>')
+        subtype = JavaValue(type_body)
+        self.java_class.add_xsd_type(type_name, subtype)
 
-        subenumtype = JavaValue(subenum_type)
-        self.java_class.append_access_method("b_subenumtype", subenumtype)
-
-        subtype = JavaValue(sub_type)
-        self.java_class.append_access_method("c_subtype", subtype)
-
-    def generate_routes(self, stmt):
+    def generate_xsd_elements(self, stmt):
         file_indent = '\t'
         indent = '\t' * 2
         body_indent = '\t' * 3
 
         exact = []
-        complex_type = []
-        enum_type = []
         stmt_arg = stmt.arg.replace("_","-")
 
         uses_stmt = search_one(stmt, 'uses')
@@ -1103,6 +1168,7 @@ class ClassGenerator(object):
                     continue
 
             if sub_stmt.keyword in ("list", "container"):
+                # generate complexType for container and list
                 parent_arg = normalize(stmt_arg + "-"+sub_stmt_arg)
                 self.generate_type(parent_arg, sub_stmt)
                 property_name = stmt_arg+"-"+sub_stmt_arg
@@ -1116,17 +1182,29 @@ class ClassGenerator(object):
                     exact.append(file_indent+'<xsd:element name="'+property_name+'" type="xsd:string" />')
                 elif type.arg == "inet:ip-address":
                     exact.append(file_indent+'<xsd:element name="'+property_name+'" type="smi:IpAddress" />')
+                elif type.arg == "int8":
+                    exact.append(file_indent+'<xsd:element name="'+property_name+'" type="xsd:byte" />')
+                elif type.arg == "int16":
+                    exact.append(file_indent+'<xsd:element name="'+property_name+'" type="xsd:short" />')
                 elif type.arg == "int32":
-                    exact.append(file_indent+'<xsd:element name="'+property_name+'" type="'+normalize(sub_stmt_arg+'Type')+'" />')
+                    exact.append(file_indent+'<xsd:element name="'+property_name+'" type="xsd:int" />')
+                elif type.arg == "int64":
+                    exact.append(file_indent+'<xsd:element name="'+property_name+'" type="xsd:long" />')
+                elif type.arg == "uint8":
+                    exact.append(file_indent+'<xsd:element name="'+property_name+'" type="xsd:unsignedByte" />')
+                elif type.arg == "uint16":
+                    exact.append(file_indent+'<xsd:element name="'+property_name+'" type="xsd:unsignedShort" />')
                 elif type.arg == "uint32":
-                    exact.append(file_indent+'<xsd:element name="'+property_name+'" type="xsd:integer" />')
+                    exact.append(file_indent+'<xsd:element name="'+property_name+'" type="xsd:unsignedInt" />')
+                elif type.arg == "uint64":
+                    exact.append(file_indent+'<xsd:element name="'+property_name+'" type="xsd:unsignedLong" />')
+                elif type.arg == "decimal64":
+                    exact.append(file_indent+'<xsd:element name="'+property_name+'" type="xsd:decimal" />')
+                elif type.arg == "boolean":
+                    exact.append(file_indent+'<xsd:element name="'+property_name+'" type="xsd:boolean" />')
                 elif type.arg == "enumeration":
-                    complex_type.append(file_indent+'<xsd:simpleType name="'+normalize(property_name+"-"+"type")+'" >')
-                    complex_type.append(indent+'<xsd:restriction base="xsd:string">')
-                    for enum in type.substmts:
-                        complex_type.append(body_indent+'<xsd:enumeration value="'+enum.arg+'" />')
-                    complex_type.append(indent+'</xsd:restriction>')
-                    complex_type.append(file_indent+'</xsd:simpleType>')
+                    # generate enumeration type
+                    self.generate_enumtype(property_name, type)
                     exact.append(file_indent+'<xsd:element name="'+property_name+'" type="'+normalize(property_name+"-"+"type")+'" />')
                 elif type.arg == "leafref":
                     exact.append(file_indent+'<xsd:element name="'+property_name+'" type="xsd:string" />')
@@ -1135,15 +1213,26 @@ class ClassGenerator(object):
 
                 exact.append(file_indent+"<!--#IFMAP-SEMANTICS-IDL Property('"+property_name+"', '"+stmt.arg+"') -->")
 
-
-        enumtype = JavaValue(enum_type)
-        self.java_class.append_access_method("d_enumtype", enumtype)
-
-        complextype = JavaValue(complex_type)
-        self.java_class.append_access_method("e_type", complextype)
-
         res = JavaValue(exact)
         self.java_class.append_access_method("f_routing", res)
+
+    def generate_enumtype(self, property_name, type):
+        complex_type = []
+
+        file_indent = '\t'
+        indent = '\t' * 2
+        body_indent = '\t' * 3
+
+        complex_type.append(file_indent+'<xsd:simpleType name="'+normalize(property_name+"-"+"type")+'" >')
+        complex_type.append(indent+'<xsd:restriction base="xsd:string">')
+        for enum in type.substmts:
+            complex_type.append(body_indent+'<xsd:enumeration value="'+enum.arg+'" />')
+        complex_type.append(indent+'</xsd:restriction>')
+        complex_type.append(file_indent+'</xsd:simpleType>')
+
+        complextype = JavaValue(complex_type)
+        self.java_class.add_xsd_type("enum_"+property_name, complextype)
+
 
     def write_to_file(self):
         write_file(self.path,
@@ -1196,55 +1285,16 @@ class JavaClass(object):
         if interfaces is None:
             self.interfaces = []
         self.source = source
-        self.fields = OrderedSet()
-        self.constructors = OrderedSet()
-        self.cloners = OrderedSet()
-        self.enablers = OrderedSet()
-        self.schema_registrators = OrderedSet()
-        self.name_getters = OrderedSet()
+        self.xsdtypes = collections.OrderedDict()
         self.access_methods = collections.OrderedDict()
         self.support_methods = OrderedSet()
-        #self.attrs = [self.fields, self.constructors, self.cloners,
-        #              self.enablers, self.schema_registrators,
-        #              self.name_getters, self.access_methods,
-        #              self.support_methods]
-        self.attrs = [self.access_methods]
-        self.implement_class = implement
+        self.attrs = [self.xsdtypes, self.access_methods]
 
-    def add_field(self, field):
+
+    def add_xsd_type(self, key, xsdtype):
         """Adds a field represented as a string"""
-        self.fields.add(field)
+        self.xsdtypes[key] = xsdtype
 
-    def add_constructor(self, constructor):
-        """Adds a constructor represented as a string"""
-        self.constructors.add(constructor)
-
-    def add_cloner(self, cloner):
-        """Adds a clone method represented as a string"""
-        if not isinstance(cloner, str):
-            for import_ in cloner.imports:
-                self.imports.add(import_)
-        self.cloners.add(cloner)
-
-    def add_enabler(self, enabler):
-        """Adds an 'enable'-method as a string"""
-        self.imports.add('com.tailf.jnc.JNCException')
-        self.imports.add('com.tailf.jnc.YangElement')
-        self.enablers.add(enabler)
-
-    def add_schema_registrator(self, schema_registrator):
-        """Adds a register schema method"""
-        self.imports.add('com.tailf.jnc.JNCException')
-        self.imports.add('com.tailf.jnc.SchemaParser')
-        self.imports.add('com.tailf.jnc.Tagpath')
-        self.imports.add('com.tailf.jnc.SchemaNode')
-        self.imports.add('com.tailf.jnc.SchemaTree')
-        self.imports.add('java.util.HashMap')
-        self.schema_registrators.add(schema_registrator)
-
-    def add_name_getter(self, name_getter):
-        """Adds a keyNames or childrenNames method represented as a string"""
-        self.name_getters.add(name_getter)
 
     def append_access_method(self, key, access_method):
         """Adds an access method represented as a string"""
@@ -1260,18 +1310,19 @@ class JavaClass(object):
         """Returns self.body. If it is None, fields and methods are added to it
         before it is returned."""
         if self.body is None:
-             self.body = []
-             # if self.superclass is not None or 'Serializable' in self.interfaces:
-             #     self.body.extend(JavaValue(
-             #         modifiers=['private', 'static', 'final', 'long'],
-             #         name='serialVersionUID', value='1L').as_list())
-             #     self.body.append('')
-             for method in flatten(collections.OrderedDict(sorted(self.attrs[0].items(), key=lambda t: t[0]))):
+            self.body = []
+            # if self.superclass is not None or 'Serializable' in self.interfaces:
+            #     self.body.extend(JavaValue(
+            #         modifiers=['private', 'static', 'final', 'long'],
+            #         name='serialVersionUID', value='1L').as_list())
+            #     self.body.append('')
+            #for method in flatten(collections.OrderedDict(sorted(self.attrs[0].items(), key=lambda t: t[0]))):
+            for method in flatten(self.attrs):
                  if hasattr(method, 'as_list'):
                      self.body.extend(method.as_list())
                  else:
                      self.body.append(method)
-             self.body.append("</xsd:schema>")
+            self.body.append("</xsd:schema>")
         return self.body
 
     def get_superclass_and_interfaces(self):
