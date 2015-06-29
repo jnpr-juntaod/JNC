@@ -25,3 +25,6 @@ jnc.pyc
 **/.idea
 **/*.iml
 **/.DS_Store
+target
+project
+
